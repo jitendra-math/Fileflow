@@ -78,7 +78,7 @@ ${folderStructure}`;
 
   function copyPrompt(file, event) {
     const btn = event.currentTarget;
-    const prompt = `bhai ab ${file} de do`;
+    const prompt = `bhai ab dyhaan se serious hokar ${file} de do aur bhai bohot hi dhyaan se hi dena`;
     navigator.clipboard.writeText(prompt);
     
     // Button feedback
