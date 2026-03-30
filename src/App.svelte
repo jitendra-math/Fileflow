@@ -1,23 +1,26 @@
 <script>
   import { onMount } from 'svelte';
-  // Import DB functions from our new file
   import { saveState as saveToDB, loadState, clearState as clearDB } from './lib/db.js';
+  
+  // Premium Lucide Icons
+  import { 
+    Command, FolderTree, BrainCircuit, Sparkles, 
+    Copy, CheckCircle2, Trash2, FileCode2, CheckCheck
+  } from 'lucide-svelte';
 
   let folderStructure = '';
   let aiContext = '';
   let files = [];
   let loading = false;
   let error = '';
-  let copyAllText = '📋 Copy All Prompts';
-  let copiedMasterText = '🧠 Copy Pro Master Prompt';
-  let activeFileIndex = -1; // Track the last copied file
-  let initialized = false; // To prevent auto-save before loading
+  let copyAllCopied = false;
+  let masterPromptCopied = false;
+  let activeFileIndex = -1;
+  let initialized = false;
 
-  // Replace with your actual Gemini API key (store in .env)
   const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
   onMount(async () => {
-    // App start hote hi DB se purana state load karenge
     const saved = await loadState();
     if (saved) {
       folderStructure = saved.folderStructure || '';
@@ -25,25 +28,64 @@
       files = saved.files || [];
       activeFileIndex = saved.activeFileIndex ?? -1;
     } else {
-      // Agar first time hai, toh default example
-      folderStructure = `src/\n  components/\n    Header.svelte\n    Footer.svelte\n  pages/\n    Home.svelte\n    About.svelte\n  lib/\n    api.js\n    store.js\n  App.svelte\n  main.js`;
+      folderStructure = `src/\n  lib/\n    api.js\n  components/\n    ui/\n      Button.svelte\n  pages/\n    Home.svelte\n  App.svelte\n  main.js`;
     }
-    initialized = true; // Data load hone ke baad auto-save on karenge
+    initialized = true;
   });
 
-  // Reactive auto-save: Jab bhi inme se koi variable change hoga, DB mein save ho jayega
   $: if (initialized) {
     saveToDB({ folderStructure, aiContext, files, activeFileIndex });
   }
+
+  // --- POWERFUL AI PROMPTS ---
+
+  const PROMPT_ORDER = `Analyze this folder structure. Return ONLY a valid list of actual file paths (no folders), ordered by their logical dependency tree (Utility/Config files FIRST -> Reusable Components SECOND -> Main/App files THIRD -> Pages LAST). 
+CRITICAL: Output exactly one file path per line. No numbering, no bullets, no markdown formatting, no conversational text.
+Structure:\n`;
+
+  function getMasterPrompt() {
+    return `SYSTEM DIRECTIVE: Act as a Principal Software Architect. I am developing a premium, mobile-first application with Apple-level UI/UX standards. 
+Here is the project folder structure:
+${folderStructure}
+
+Generate a definitive "Master Architecture Document". This will serve as the absolute source of truth for the AI coding engine.
+It MUST include:
+1. Core Tech Stack & Build Configuration.
+2. Global State Management & Data Flow Architecture.
+3. Strict UI/UX Rules: Must enforce Apple-level design (Light theme, soft shadows, glassmorphism, fluid typography, mobile-first responsive design).
+4. Code Quality Rules: DRY principles, modularity, and explicit import rules.
+
+CRITICAL RULES FOR YOU:
+- Output ONLY the Master Architecture Document in valid Markdown.
+- DO NOT write any file code.
+- ZERO conversational filler (No "Sure!", no "Here is the document").`;
+  }
+
+  function getFilePrompt(file) {
+    return `SYSTEM DIRECTIVE: You are a strict, elite code-generation engine. 
+
+--- MASTER ARCHITECTURE CONTEXT ---
+${aiContext || 'No context provided. Use industry best practices for a premium application.'}
+--- END CONTEXT ---
+
+TASK: Generate the COMPLETE, production-ready code for the following file: **${file}**
+
+STRICT CONSTRAINTS:
+1. Write 100% of the logic. NEVER use placeholders like "// logic goes here" or "// remaining code".
+2. Match all imports perfectly to the provided architecture.
+3. Implement the premium UI/UX guidelines defined in the Master Context.
+4. Output ONLY the raw code block. 
+5. ZERO conversational text. NO greetings, NO explanations, NO follow-up questions. Just the code.`;
+  }
+
+  // --- ACTIONS ---
 
   async function generateOrder() {
     if (!folderStructure.trim()) return;
     loading = true;
     error = '';
     files = [];
-    activeFileIndex = -1; // Reset ticks on new generation
-
-    const prompt = `Analyze the following folder structure and return ONLY the list of file paths in the logical order they should be generated. One file per line, no extra text, no numbering.\n\nRules:\n- Utility files (helpers, api, store) should come first\n- Then reusable components\n- Then configuration files (App, main, index)\n- Then pages (which depend on components and utils)\n- Only include actual files (not folders)\n\nFolder structure:\n${folderStructure}`;
+    activeFileIndex = -1;
 
     try {
       const response = await fetch(
@@ -51,64 +93,52 @@
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }]
-          })
+          body: JSON.stringify({ contents: [{ parts: [{ text: PROMPT_ORDER + folderStructure }] }] })
         }
       );
 
-      if (!response.ok) throw new Error('API call failed');
+      if (!response.ok) throw new Error('API request failed.');
 
       const data = await response.json();
       const text = data.candidates[0].content.parts[0].text;
       
-      files = text.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('```'));
+      files = text.split('\n')
+        .map(line => line.replace(/^[-\*\d\.\s]+/, '').trim()) // Strip accidental bullets/numbers
+        .filter(line => line && !line.startsWith('```'));
     } catch (err) {
       console.error(err);
-      error = 'Gemini se order nahi mila. Phir se try karo.';
-      // Fallback
-      files = [
-        'src/lib/api.js', 'src/lib/store.js', 'src/components/Header.svelte',
-        'src/components/Footer.svelte', 'src/App.svelte', 'src/main.js',
-        'src/pages/Home.svelte', 'src/pages/About.svelte'
-      ];
+      error = 'Failed to fetch the sequence. Check your API key or network.';
     } finally {
       loading = false;
     }
   }
 
   function copyMasterPrompt() {
-    const prompt = `Act as an expert Software Architect. I am building a project with the following folder structure:\n\n${folderStructure}\n\nBefore we start writing code, analyze this structure and generate a comprehensive "Master Project Document". It must include:\n1. Core Architecture & Tech Stack assumptions.\n2. Global State Management & Data Flow rules.\n3. Styling & UI/UX Guidelines (Premium/Modern approach).\n4. Key constraints to remember.\n\nProvide this in detailed Markdown. Do not write any file code yet. Just give me the brief.`;
-    
-    navigator.clipboard.writeText(prompt);
-    copiedMasterText = '✅ Pro Prompt Copied!';
-    setTimeout(() => { copiedMasterText = '🧠 Copy Pro Master Prompt'; }, 3000);
+    navigator.clipboard.writeText(getMasterPrompt());
+    masterPromptCopied = true;
+    setTimeout(() => { masterPromptCopied = false; }, 3000);
   }
 
   function copyFilePrompt(file, index) {
-    // This is the ultimate prompt merging Context + Current File
-    const prompt = `Here is the Master Context of our project:\n\n---\n${aiContext || 'No context provided yet.'}\n---\n\nBased strictly on the above rules and context, generate the COMPLETE code for this specific file: **${file}**\n\nRules for this generation:\n1. Ensure all imports match the folder structure exactly.\n2. Do not truncate code or use placeholders like "// logic here". Write the full logic.\n3. Keep the premium UI/UX standard in mind.\n4. Output ONLY the code for this single file, no extra chatting.`;
-    
-    navigator.clipboard.writeText(prompt);
-    activeFileIndex = index; // Keep ✅ visible until another file is clicked
+    navigator.clipboard.writeText(getFilePrompt(file));
+    activeFileIndex = index;
   }
 
   function copyAll() {
-    const allPrompts = files.map(f => `bhai ab ${f} de do`).join('\n');
+    const allPrompts = files.map(f => getFilePrompt(f)).join('\n\n---\n\n');
     navigator.clipboard.writeText(allPrompts);
-    
-    copyAllText = '✅ Copied!';
-    setTimeout(() => { copyAllText = '📋 Copy All Prompts'; }, 2000);
+    copyAllCopied = true;
+    setTimeout(() => { copyAllCopied = false; }, 3000);
   }
 
   async function clearProject() {
-    if (confirm("Are you sure you want to clear the entire project? This will delete saved data.")) {
+    if (confirm("Clear this project? All context and files will be removed.")) {
       folderStructure = '';
       aiContext = '';
       files = [];
       activeFileIndex = -1;
       error = '';
-      await clearDB(); // Wipe from IndexedDB
+      await clearDB();
     }
   }
 </script>
@@ -116,371 +146,454 @@
 <svelte:head>
   <link rel="preconnect" href="[https://fonts.googleapis.com](https://fonts.googleapis.com)">
   <link rel="preconnect" href="[https://fonts.gstatic.com](https://fonts.gstatic.com)" crossorigin>
-  <link href="[https://fonts.googleapis.com/css2?family=Inter:opsz@14..32&display=swap](https://fonts.googleapis.com/css2?family=Inter:opsz@14..32&display=swap)" rel="stylesheet">
+  <link href="[https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap](https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap)" rel="stylesheet">
 </svelte:head>
 
 <main>
-  <div class="container">
-    <header>
-      <h1>⌘ FileFlow</h1>
-      <p class="subtitle">AI files in perfect order — Apple grade</p>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="logo-wrapper">
+        <Command size={32} color="#1d1d1f" strokeWidth={2.5} />
+      </div>
+      <h1>FileFlow</h1>
+      <p>Apple-Grade AI Sequencing</p>
     </header>
 
-    <div class="action-bar">
-      <button class="danger" on:click={clearProject}>🗑️ Clear Project</button>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <label for="structure">📁 1. Folder Structure</label>
-        <button class="secondary small" on:click={copyMasterPrompt} disabled={!folderStructure}>
-          {copiedMasterText}
-        </button>
-      </div>
-      <textarea
-        id="structure"
-        bind:value={folderStructure}
-        placeholder="Paste your folder structure..."
-      ></textarea>
-      
-      <button class="primary" on:click={generateOrder} disabled={loading}>
-        {loading ? '✨ Thinking...' : '🔍 Generate Order'}
+    <div class="toolbar">
+      <button class="btn-ghost destructive" on:click={clearProject}>
+        <Trash2 size={16} />
+        <span>Clear Project</span>
       </button>
     </div>
 
-    {#if error}
-      <div class="error">⚠️ {error}</div>
-    {/if}
-
-    <div class="card">
-      <label for="aiContext">🧠 2. Paste AI Project Brief (Master Context)</label>
-      <p class="helper-text">Paste the architecture/brief from AI here. This will be injected into every file prompt automatically.</p>
-      <textarea
-        id="aiContext"
-        class="context-area"
-        bind:value={aiContext}
-        placeholder="Paste the master context/architecture decisions here..."
-      ></textarea>
-    </div>
-
-    {#if files.length > 0}
-      <div class="card files">
-        <div class="files-header">
-          <h2>📋 3. Files in order</h2>
-          <button class="secondary" on:click={copyAll}>{copyAllText}</button>
+    <section class="card">
+      <div class="card-header">
+        <div class="title-group">
+          <FolderTree size={20} color="#0071e3" />
+          <h2>1. Folder Structure</h2>
         </div>
-        
-        <ul class="file-list">
-          {#each files as file, index}
-            <li class="file-item {activeFileIndex === index ? 'active-row' : ''}">
-              <span class="file-path">
-                <span class="index">{index + 1}.</span> {file}
-              </span>
-              <button
-                class="copy-btn {activeFileIndex === index ? 'copied' : ''}"
-                on:click={() => copyFilePrompt(file, index)}
-                aria-label="Copy pro prompt for {file}"
-              >
-                {activeFileIndex === index ? '✅' : '📋'}
-              </button>
-            </li>
-          {/each}
-        </ul>
+        <button 
+          class="btn-secondary small" 
+          on:click={copyMasterPrompt} 
+          disabled={!folderStructure}
+        >
+          {#if masterPromptCopied}
+            <CheckCheck size={14} color="#34c759"/> <span class="text-green">Pro Prompt Copied</span>
+          {:else}
+            <BrainCircuit size={14} /> <span>Copy Pro Prompt</span>
+          {/if}
+        </button>
+      </div>
+      
+      <textarea
+        bind:value={folderStructure}
+        placeholder="Paste your component tree here..."
+        class="code-input"
+        spellcheck="false"
+      ></textarea>
+      
+      <button class="btn-primary w-full mt-4" on:click={generateOrder} disabled={loading || !folderStructure}>
+        {#if loading}
+          <Sparkles size={18} class="spin" /> <span>Thinking...</span>
+        {:else}
+          <Sparkles size={18} /> <span>Generate File Sequence</span>
+        {/if}
+      </button>
+    </section>
+
+    {#if error}
+      <div class="alert-error">
+        <p>{error}</p>
       </div>
     {/if}
 
-    <footer>
-      <p>Made with 🫶 for AI developers</p>
-    </footer>
+    <section class="card">
+      <div class="card-header">
+        <div class="title-group">
+          <BrainCircuit size={20} color="#0071e3" />
+          <h2>2. Master Context</h2>
+        </div>
+      </div>
+      <p class="helper-text">Paste the architecture brief generated by your AI here. This strict context acts as the brain for all file generations.</p>
+      <textarea
+        bind:value={aiContext}
+        placeholder="Inject AI Master Context here..."
+        class="code-input context-input"
+        spellcheck="false"
+      ></textarea>
+    </section>
+
+    {#if files.length > 0}
+      <section class="card files-card">
+        <div class="card-header">
+          <div class="title-group">
+            <FileCode2 size={20} color="#0071e3" />
+            <h2>3. Generation Queue</h2>
+          </div>
+          <button class="btn-secondary small" on:click={copyAll}>
+            {#if copyAllCopied}
+              <CheckCheck size={14} color="#34c759" /> <span class="text-green">Copied All</span>
+            {:else}
+              <Copy size={14} /> <span>Copy All</span>
+            {/if}
+          </button>
+        </div>
+        
+        <div class="file-list">
+          {#each files as file, index}
+            <div class="file-row {activeFileIndex === index ? 'active' : ''}">
+              <div class="file-info">
+                <span class="file-number">{index + 1}</span>
+                <span class="file-name">{file}</span>
+              </div>
+              <button 
+                class="btn-icon {activeFileIndex === index ? 'copied' : ''}" 
+                on:click={() => copyFilePrompt(file, index)}
+                aria-label="Copy prompt for {file}"
+              >
+                {#if activeFileIndex === index}
+                  <CheckCircle2 size={18} color="#fff" />
+                {:else}
+                  <Copy size={18} color="#1d1d1f" />
+                {/if}
+              </button>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
   </div>
 </main>
 
 <style>
-  * {
+  /* --- Apple-Grade Mobile-First CSS --- */
+  :global(body) {
     margin: 0;
     padding: 0;
-    box-sizing: border-box;
+    background-color: #f5f5f7;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #1d1d1f;
+    -webkit-font-smoothing: antialiased;
   }
 
   main {
     min-height: 100vh;
-    background: linear-gradient(145deg, #f5f5f7 0%, #e8e8ed 100%);
+    padding: 1rem; /* Mobile first minimal padding */
     display: flex;
     flex-direction: column;
     align-items: center;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    padding: 2.5rem 1.5rem;
   }
 
-  .container {
-    max-width: 800px;
+  .app-container {
     width: 100%;
+    max-width: 700px; /* Optimal reading width */
+    margin: 0 auto;
+    padding-bottom: 3rem;
   }
 
-  header {
+  /* Typography & Header */
+  .app-header {
     text-align: center;
-    margin-bottom: 2rem;
+    margin: 2rem 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
   }
 
-  h1 {
-    font-size: 3rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    background: linear-gradient(135deg, #1d1d1f, #434347);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+  .logo-wrapper {
+    background: white;
+    padding: 1rem;
+    border-radius: 20px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.04);
     margin-bottom: 0.5rem;
   }
 
-  .subtitle {
-    color: #6e6e73;
-    font-size: 1.2rem;
-    font-weight: 400;
+  h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    margin: 0;
+    color: #1d1d1f;
   }
 
-  .action-bar {
+  .app-header p {
+    font-size: 1rem;
+    color: #86868b;
+    margin: 0;
+    font-weight: 500;
+  }
+
+  /* Toolbar */
+  .toolbar {
     display: flex;
     justify-content: flex-end;
     margin-bottom: 1rem;
   }
 
+  /* Cards */
   .card {
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: 32px;
-    padding: 2rem;
-    box-shadow: 
-      0 20px 40px -10px rgba(0, 0, 0, 0.1),
-      inset 0 1px 1px rgba(255, 255, 255, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.5);
-    margin-bottom: 2rem;
+    background: #ffffff;
+    border-radius: 24px;
+    padding: 1.5rem; /* Mobile padding */
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.02);
   }
 
   .card-header {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.8rem;
+    flex-direction: column; /* Stack on mobile */
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1.2rem;
   }
 
-  label {
-    display: block;
-    font-weight: 600;
-    color: #1d1d1f;
+  .title-group {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  h2 {
     font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.01em;
   }
 
   .helper-text {
     font-size: 0.9rem;
-    color: #8e8e93;
+    color: #86868b;
     margin-bottom: 1rem;
+    line-height: 1.4;
   }
 
-  textarea {
+  /* Inputs */
+  .code-input {
     width: 100%;
-    height: 180px;
-    padding: 1.2rem;
-    border: none;
-    border-radius: 18px;
-    background: rgba(255, 255, 255, 0.6);
-    backdrop-filter: blur(10px);
-    font-family: 'SF Mono', 'Inter', monospace;
-    font-size: 0.9rem;
+    height: 160px;
+    padding: 1rem;
+    background: #f5f5f7;
+    border: 2px solid transparent;
+    border-radius: 16px;
+    font-family: 'SF Mono', ui-monospace, Menlo, Monaco, monospace;
+    font-size: 0.85rem;
     line-height: 1.6;
     color: #1d1d1f;
     resize: vertical;
-    box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.02);
     transition: all 0.2s ease;
-    margin-bottom: 1.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.8);
   }
 
-  .context-area {
-    height: 120px;
-    background: rgba(245, 245, 247, 0.7);
-  }
-
-  textarea:focus {
+  .code-input:focus {
     outline: none;
-    background: rgba(255, 255, 255, 0.9);
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05), inset 0 2px 4px rgba(0, 0, 0, 0.02);
+    background: #ffffff;
     border-color: #0071e3;
+    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
   }
 
-  button.primary {
-    background: #0071e3;
+  .context-input {
+    height: 120px;
+  }
+
+  /* Buttons */
+  button {
+    font-family: inherit;
+    cursor: pointer;
     border: none;
-    color: white;
-    font-size: 1rem;
-    font-weight: 500;
-    padding: 0.9rem 2rem;
-    border-radius: 980px;
-    width: 100%;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: all 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
   }
 
-  button.primary:hover:not(:disabled) {
-    background: #0077ed;
-    transform: scale(1.02);
-    box-shadow: 0 8px 20px rgba(0, 113, 227, 0.4);
+  button:active {
+    transform: scale(0.97);
   }
 
-  button.primary:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  button.secondary {
-    background: rgba(255, 255, 255, 0.8);
-    border: 1px solid rgba(0, 0, 0, 0.05);
-    color: #1d1d1f;
-    font-size: 0.95rem;
-    font-weight: 500;
-    padding: 0.6rem 1.4rem;
-    border-radius: 980px;
-    cursor: pointer;
-    backdrop-filter: blur(10px);
-    transition: all 0.2s ease;
-  }
-
-  button.secondary.small {
-    padding: 0.4rem 1rem;
-    font-size: 0.85rem;
-  }
-
-  button.secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 1);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  }
-  
-  button.secondary:disabled {
+  button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    transform: none;
   }
 
-  button.danger {
-    background: rgba(255, 59, 48, 0.1);
-    color: #ff3b30;
-    border: 1px solid rgba(255, 59, 48, 0.2);
-    padding: 0.5rem 1rem;
+  .btn-primary {
+    background: #0071e3;
+    color: white;
+    font-size: 1.05rem;
+    font-weight: 600;
+    padding: 1rem 1.5rem;
     border-radius: 980px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    box-shadow: 0 4px 14px rgba(0, 113, 227, 0.3);
   }
 
-  button.danger:hover {
-    background: rgba(255, 59, 48, 0.15);
+  .btn-primary:hover:not(:disabled) {
+    background: #0077ed;
+    box-shadow: 0 6px 20px rgba(0, 113, 227, 0.4);
   }
 
-  .files-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.8rem;
-    flex-wrap: wrap;
-    gap: 1rem;
+  .w-full {
+    width: 100%;
   }
 
-  h2 {
-    font-size: 1.4rem;
-    font-weight: 500;
+  .mt-4 {
+    margin-top: 1rem;
+  }
+
+  .btn-secondary {
+    background: #f5f5f7;
     color: #1d1d1f;
+    font-size: 0.9rem;
+    font-weight: 500;
+    padding: 0.6rem 1rem;
+    border-radius: 980px;
+    border: 1px solid rgba(0,0,0,0.05);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: #e8e8ed;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    font-size: 0.9rem;
+    font-weight: 500;
+    padding: 0.5rem 0.8rem;
+    border-radius: 980px;
+  }
+
+  .btn-ghost.destructive {
+    color: #ff3b30;
+  }
+
+  .btn-ghost.destructive:hover {
+    background: rgba(255, 59, 48, 0.1);
+  }
+
+  .text-green { color: #28a745; }
+
+  /* File List */
+  .files-card {
+    padding: 1rem; /* tighter on mobile */
   }
 
   .file-list {
-    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
   }
 
-  .file-item {
+  .file-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 0.8rem 1rem;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-    border-radius: 12px;
-    animation: fadeIn 0.3s ease;
+    background: #fbfbfd;
+    border-radius: 16px;
+    border: 1px solid rgba(0,0,0,0.03);
     transition: all 0.2s ease;
   }
 
-  .file-item:last-child {
-    border-bottom: none;
+  .file-row:hover {
+    background: #ffffff;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.03);
   }
 
-  .file-item.active-row {
-    background: rgba(0, 113, 227, 0.05);
-    border-color: transparent;
+  .file-row.active {
+    background: #f0f7ff;
+    border-color: #cce3fd;
   }
 
-  .file-path {
-    font-family: 'SF Mono', 'Inter', monospace;
-    font-size: 0.95rem;
-    color: #1d1d1f;
+  .file-info {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.8rem;
+    overflow: hidden;
   }
 
-  .index {
-    color: #8e8e93;
-    font-weight: 400;
-    min-width: 2rem;
-  }
-
-  .copy-btn {
-    background: rgba(255, 255, 255, 0.8);
-    border: none;
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    font-size: 1.3rem;
-    cursor: pointer;
+  .file-number {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #86868b;
+    background: #e8e8ed;
+    min-width: 24px;
+    height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
-    backdrop-filter: blur(10px);
-    transition: all 0.15s ease;
-    border: 1px solid rgba(255, 255, 255, 0.8);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+    border-radius: 50%;
   }
 
-  .copy-btn:hover {
-    background: rgba(255, 255, 255, 1);
-    transform: scale(1.08);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  }
-
-  .copy-btn.copied {
-    background: #34c759;
+  .file-row.active .file-number {
+    background: #0071e3;
     color: white;
+  }
+
+  .file-name {
+    font-family: 'SF Mono', monospace;
+    font-size: 0.9rem;
+    color: #1d1d1f;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .btn-icon {
+    background: #ffffff;
+    border: 1px solid rgba(0,0,0,0.08);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+    flex-shrink: 0;
+  }
+
+  .btn-icon:hover {
+    background: #f5f5f7;
+    transform: scale(1.05);
+  }
+
+  .btn-icon.copied {
+    background: #34c759;
     border-color: #34c759;
   }
 
-  .error {
-    background: rgba(255, 69, 58, 0.1);
-    backdrop-filter: blur(10px);
-    color: #ff3b30;
-    padding: 1rem 1.8rem;
-    border-radius: 980px;
+  .alert-error {
+    background: #fff0f0;
+    border: 1px solid #ffdbdb;
+    color: #d93025;
+    padding: 1rem;
+    border-radius: 16px;
+    margin-bottom: 1.5rem;
+    font-weight: 500;
+    font-size: 0.95rem;
     text-align: center;
-    margin-bottom: 2rem;
-    border: 1px solid rgba(255, 69, 58, 0.2);
   }
 
-  footer {
-    text-align: center;
-    color: #8e8e93;
-    font-size: 0.9rem;
-    margin-top: 2rem;
+  /* Spinner Animation */
+  :global(.spin) {
+    animation: spin 1.5s linear infinite;
   }
 
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
+  @keyframes spin {
+    100% { transform: rotate(360deg); }
+  }
+
+  /* --- Tablet & Desktop Overrides --- */
+  @media (min-width: 640px) {
+    main { padding: 3rem 1.5rem; }
+    
+    h1 { font-size: 3rem; }
+    
+    .card { padding: 2.5rem; }
+    
+    .card-header {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .files-card { padding: 2rem; }
   }
 </style>
